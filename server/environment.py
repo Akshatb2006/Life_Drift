@@ -215,8 +215,9 @@ class LifeDriftEnvironment(Environment[LifeDriftAction, LifeDriftObservation, Li
         )
 
     def grade(self) -> float:
-        """Compute final grader score for the episode."""
-        return self._grade()
+        """Compute final grader score for the episode. Clamped to (0, 1) exclusive."""
+        raw = self._grade()
+        return min(max(raw, 0.01), 0.99)
 
     def _grade(self) -> float:
         """Internal grading logic per task."""
@@ -405,7 +406,8 @@ class LifeDriftEnvironment(Environment[LifeDriftAction, LifeDriftObservation, Li
         # Include grade in metadata when episode is done
         meta = {"episode_id": session["episode_id"]}
         if done:
-            meta["score"] = self._grade()
+            raw_score = self._grade()
+            meta["score"] = min(max(raw_score, 0.01), 0.99)
 
         return LifeDriftObservation(
             done=done,

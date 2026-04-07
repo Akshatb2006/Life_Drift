@@ -20,7 +20,7 @@ API_KEY = os.getenv("HF_TOKEN") or os.getenv("API_KEY")
 
 API_BASE_URL = os.getenv("API_BASE_URL") or "https://router.huggingface.co/v1"
 MODEL_NAME = os.getenv("MODEL_NAME") or "Qwen/Qwen2.5-72B-Instruct"
-TASK_NAME = os.getenv("LIFE_DRIFT_TASK", "drift_correction")
+TASK_NAMES = ["drift_correction", "energy_balance", "long_term_stability"]
 BENCHMARK = os.getenv("LIFE_DRIFT_BENCHMARK", "life_drift_cognitive_env")
 MAX_STEPS = 20
 TEMPERATURE = 0.3
@@ -156,21 +156,23 @@ def get_model_action(client: OpenAI, obs, history: List[str]) -> LifeDriftAction
     return parse_llm_response(text, obs.goals)
 
 
-async def main() -> None:
-    client = OpenAI(base_url=API_BASE_URL, api_key=API_KEY)
+def clamp_score(score: float) -> float:
+    """Clamp score to strictly (0, 1) — never exactly 0.0 or 1.0."""
+    return min(max(score, 0.01), 0.99)
 
-    env = await LifeDriftEnv.from_docker_image(IMAGE_NAME)
 
+async def run_task(env, client: OpenAI, task_name: str) -> None:
+    """Run a single task with [START]/[STEP]/[END] logging."""
     history: List[str] = []
     rewards: List[float] = []
     steps_taken = 0
     score = 0.0
     success = False
 
-    log_start(task=TASK_NAME, env=BENCHMARK, model=MODEL_NAME)
+    log_start(task=task_name, env=BENCHMARK, model=MODEL_NAME)
 
     try:
-        result = await env.reset(task_id=TASK_NAME)
+        result = await env.reset(task_id=task_name)
         obs = result.observation
 
         for step in range(1, MAX_STEPS + 1):
@@ -198,15 +200,30 @@ async def main() -> None:
 
         # Get score from metadata if available, otherwise compute from rewards
         score = obs.metadata.get("score", 0.0) if obs.metadata else 0.0
-        score = min(max(score, 0.0), 1.0)
-        success = score > 0.0
+        score = clamp_score(score)
+        success = score > 0.01
 
+    except Exception as e:
+        print(f"[DEBUG] Task {task_name} error: {e}", flush=True)
+        score = clamp_score(0.0)
+
+    finally:
+        log_end(success=success, steps=steps_taken, score=score, rewards=rewards)
+
+
+async def main() -> None:
+    client = OpenAI(base_url=API_BASE_URL, api_key=API_KEY)
+
+    env = await LifeDriftEnv.from_docker_image(IMAGE_NAME)
+
+    try:
+        for task_name in TASK_NAMES:
+            await run_task(env, client, task_name)
     finally:
         try:
             await env.close()
         except Exception as e:
             print(f"[DEBUG] env.close() error (container cleanup): {e}", flush=True)
-        log_end(success=success, steps=steps_taken, score=score, rewards=rewards)
 
 
 if __name__ == "__main__":

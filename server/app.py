@@ -6,7 +6,7 @@ import os
 # Add parent directory to path for imports
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from fastapi import FastAPI, HTTPException
+from fastapi import Body, FastAPI, HTTPException
 from pydantic import BaseModel
 from typing import Optional
 
@@ -52,7 +52,7 @@ def root():
 
 
 @app.post("/reset", response_model=LifeDriftObservation)
-def reset(request: Optional[ResetRequest] = None):
+def reset(request: Optional[ResetRequest] = Body(None)):
     try:
         if request is None:
             request = ResetRequest()
